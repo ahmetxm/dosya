@@ -14,7 +14,7 @@ print(f'Kullanılan cihaz: {device}')
 
 # Veri hazırlama (öncekiyle aynı)
 zigzag_df = pd.read_csv('ETHUSD_ZigZag_Result.csv')
-price_df = pd.read_csv('ETHUSD1.csv')
+price_df = pd.read_csv('ETHUSD.csv')
 
 zigzag_df['Date'] = pd.to_datetime(zigzag_df['Date'])
 price_df['Open time'] = pd.to_datetime(price_df['Open time'])
@@ -235,4 +235,5 @@ if positions:
 
 print(f"\nSon Sermaye   : ${capital:,.2f}")
 print(f"Getiri        : {capital / initial_capital:.1f}x")
+
 print(f"Çalışma süresi: {time.time() - start_time:.1f} saniye")
