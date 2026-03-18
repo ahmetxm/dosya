@@ -1,239 +1,180 @@
-import pandas as pd
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import MinMaxScaler
+# nekros_auto.py
 import time
+import json
+import requests
+from datetime import datetime
+import threading
+import websocket
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
+from py_clob_client.order_builder.constants import BUY, SELL
+from dotenv import load_dotenv
+import os
 
-start_time = time.time()
+load_dotenv()
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'Kullanılan cihaz: {device}')
+class NekrosAuto:
+    def __init__(self, dry_run=True):
+        self.host = "https://clob.polymarket.com"
+        self.chain_id = 137  # Polygon Mainnet
+        self.private_key = os.getenv("WALLET_PRIVATE_KEY")
 
-# Veri hazırlama (öncekiyle aynı)
-zigzag_df = pd.read_csv('ETHUSD_ZigZag_Result.csv')
-price_df = pd.read_csv('ETHUSD.csv')
+        if not self.private_key:
+            raise ValueError("Lütfen .env dosyasına WALLET_PRIVATE_KEY ekle! (Polygon cüzdan private key'i)")
 
-zigzag_df['Date'] = pd.to_datetime(zigzag_df['Date'])
-price_df['Open time'] = pd.to_datetime(price_df['Open time'])
+        # Client'ı private key ile başlat
+        self.client = ClobClient(
+            host=self.host,
+            key=self.private_key,
+            chain_id=self.chain_id,
+            signature_type=0,  # 0 = EOA (normal cüzdan), eğer Magic/email ise 1 yap
+            # funder="<funder_address>" eğer proxy wallet kullanıyorsan ekle, yoksa kaldır
+        )
 
-zigzag_df = zigzag_df.set_index('Date')
-price_df = price_df.set_index('Open time')
-merged_df = price_df.join(zigzag_df, how='left')
+        # API creds otomatik derive et ve set et (en kritik adım!)
+        creds = self.client.create_or_derive_api_creds()
+        self.client.set_api_creds(creds)
 
-merged_df['Type'] = merged_df['Type'].fillna('None')
-merged_df['Signal'] = 0
-merged_df.loc[merged_df['Type'] == 'Low', 'Signal'] = 1
-merged_df.loc[merged_df['Type'] == 'High', 'Signal'] = -1
+        self.dry_run = dry_run
+        self.market_slug_prefix = "bitcoin-up-down-5-minute"  # slug'ı güncel tut (siteye bak)
+        self.up_token_id = None
+        self.down_token_id = None
+        self.current_up_price = 0.50
+        self.balance = 1000.0  # başlangıç, sonra güncellenir
+        self.ruh_sayisi = 0
+        self.yara_sayisi = 0
+        self.is_dead = False
 
-data = merged_df[['Open', 'High', 'Low', 'Close', 'Volume']].values
-labels = merged_df['Signal'].values + 1
+        self.update_balance()
+        self.find_active_btc_5min_market()
 
-scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(data)
+    def fisilt(self, msg):
+        print(f"\033[90m{msg}\033[0m")  # gri/koyu
 
-seq_length = 120
-X, y = [], []
-for i in range(len(data_scaled) - seq_length):
-    X.append(data_scaled[i:i+seq_length])
-    y.append(labels[i+seq_length])
+    def durum_raporu(self):
+        can_yuzde = (self.balance / 1000.0) * 100 if self.balance > 0 else 0
+        print("\n" + "═" * 60)
+        print(f" N E K R O S   AUTO   {datetime.now().strftime('%H:%M:%S')}")
+        print(f"  Kalan kan:     {self.balance:.2f} USDC ({can_yuzde:.1f}%)")
+        print(f"  Ruhlar:        {self.ruh_sayisi}")
+        print(f"  Yaralar:       {self.yara_sayisi}")
+        print(f"  Dry-run:       {'Açık (simülasyon)' if self.dry_run else 'Kapalı (GERÇEK TRADE)'}")
+        print("═" * 60 + "\n")
 
-X = np.array(X)
-y = np.array(y, dtype=int)
+    def update_balance(self):
+        try:
+            # Gerçek bakiye çek (USDC varsayıyoruz)
+            bal_info = self.client.get_balance()
+            self.balance = float(bal_info.get('usdc', {}).get('balance', 1000.0))
+        except Exception as e:
+            self.fisilt(f"Bakiye güncelleme hatası: {e} → Eski değer korunuyor.")
 
-split = int(0.8 * len(X))
-X_train, X_test = X[:split], X[split:]
-y_train, y_test = y[:split], y[split:]
+    def find_active_btc_5min_market(self):
+        try:
+            url = "https://gamma-api.polymarket.com/markets?limit=20&active=true&order_by=volume&ascending=false"
+            resp = requests.get(url, timeout=10)
+            markets = resp.json()
+            for m in markets:
+                slug = m.get('slug', '').lower()
+                if "bitcoin" in slug and "up" in slug and "down" in slug and "5" in slug:
+                    self.up_token_id = m['clobTokenIds'][0]   # Genelde Yes = Up
+                    self.down_token_id = m['clobTokenIds'][1] # No = Down
+                    self.fisilt(f"Aktif BTC 5min market bulundu: {m['question']}")
+                    self.fisilt(f"Up Token ID: {self.up_token_id}")
+                    return
+            self.fisilt("BTC 5min market bulunamadı. Siteye girip token ID'yi manuel kodla.")
+        except Exception as e:
+            self.fisilt(f"Market arama hatası: {e}")
 
-X_train = torch.from_numpy(X_train).float().to(device)
-y_train = torch.from_numpy(y_train).long().to(device)
-X_test = torch.from_numpy(X_test).float().to(device)
+    def get_latest_up_price(self):
+        try:
+            ob = self.client.get_order_book(self.up_token_id)
+            best_ask = float(ob.asks[0].price) if ob.asks else 0.50
+            self.current_up_price = best_ask
+            self.fisilt(f"UP güncel fiyat (best ask): {self.current_up_price:.4f}")
+        except Exception as e:
+            self.fisilt(f"Fiyat çekme hatası: {e} → Eski fiyat korunuyor.")
 
-class SignalDataset(Dataset):
-    def __init__(self, X, y):
-        self.X = X
-        self.y = y
-    def __len__(self): return len(self.X)
-    def __getitem__(self, idx): return self.X[idx], self.y[idx]
+    def karar_ver(self):
+        edge = self.current_up_price - 0.5
+        if edge > 0.015:
+            return "UP", self.up_token_id, BUY
+        elif edge < -0.015:
+            return "DOWN", self.down_token_id, SELL  # DOWN için No token alıyoruz (SELL mantığına dikkat)
+        else:
+            return None, None, None
 
-train_loader = DataLoader(SignalDataset(X_train, y_train), batch_size=128, shuffle=True)
+    def pozisyon_ac(self, yon, token_id, side):
+        if not token_id:
+            self.fisilt("Token ID yok → trade atlanıyor.")
+            return
 
-class LSTMClassifier(nn.Module):
-    def __init__(self, input_size=5, hidden_size=100, num_layers=3, num_classes=3):
-        super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
-        self.fc = nn.Linear(hidden_size, num_classes)
+        self.get_latest_up_price()
 
-    def forward(self, x):
-        h0 = torch.zeros(3, x.size(0), 100).to(device)
-        c0 = torch.zeros(3, x.size(0), 100).to(device)
-        out, _ = self.lstm(x, (h0, c0))
-        return self.fc(out[:, -1, :])
+        miktar_str = input(f"\nNEKROS: {yon} yönünde karar verdi. Ne kadar USDC yatırmak istiyorsun? (max {self.balance:.2f}): ")
+        try:
+            miktar = float(miktar_str.strip())
+            if miktar <= 0 or miktar > self.balance:
+                self.fisilt("Geçersiz miktar → trade atlandı.")
+                return
+        except:
+            self.fisilt("Geçersiz giriş → trade atlandı.")
+            return
 
-model = LSTMClassifier().to(device)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0005)
+        price = self.current_up_price if yon == "UP" else (1 - self.current_up_price)
+        share_size = miktar / price
 
-for epoch in range(30):
-    model.train()
-    for inputs, targets in train_loader:
-        inputs, targets = inputs.to(device), targets.to(device)
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=share_size,
+            side=side
+        )
 
-# Batch prediction
-model.eval()
-with torch.no_grad():
-    outputs = model(X_test)
-    _, predicted = torch.max(outputs, 1)
-    signals = predicted.cpu().numpy() - 1
+        self.fisilt(f"Pozisyon hazırlanıyor → {yon} | {miktar:.2f} USDC ≈ {share_size:.4f} share @ {price:.4f}")
 
-# ────────────────────────────────────────────────
-#          BACKTEST - TRAILING STOP EKLENDİ
-# ────────────────────────────────────────────────
+        if self.dry_run:
+            self.fisilt("DRY-RUN MODU: Gerçek order gönderilmedi (simülasyon).")
+            kazandi = input("Simülasyon sonucu (kazandı mı? e / h): ").lower().strip() == 'e'
+            self.trade_sonuc(kazandi, miktar)
+        else:
+            try:
+                signed_order = self.client.create_order(order_args)
+                resp = self.client.post_order(signed_order, order_type=OrderType.GTC)
+                self.fisilt(f"Order başarıyla gönderildi: {resp}")
+                # Gerçek sonuç için polling veya WS ekleyebilirsin
+            except Exception as e:
+                self.fisilt(f"Order gönderme hatası: {e}")
 
-initial_capital = 1000.0
-leverage = 100
-capital = initial_capital
-positions = []
-fees = 0.001
+    def trade_sonuc(self, kazandi, miktar):
+        if kazandi:
+            kar = miktar * 0.98  # yaklaşık ücret sonrası
+            self.balance += kar
+            self.ruh_sayisi += 1
+            self.fisilt(f"Zafer... bir ruh daha toplandı +{kar:.2f}")
+        else:
+            self.balance -= miktar
+            self.yara_sayisi += 1
+            self.fisilt(f"Yara açıldı... -{miktar:.2f} kan kaybı")
 
-sl_percent = 0.02          # başlangıç stop-loss
-tp_percent = 0.06          # take-profit
-trailing_activation = 0.03 # %3 kar sonrası trailing başlar
-trailing_distance = 0.025  # trailing mesafesi %2.5
-max_drawdown = 0.50
-liq_margin = 1.0 / leverage
+        if self.balance <= 5:
+            self.is_dead = True
+            self.fisilt("Kan tükendi... Nekros karanlığa gömüldü.")
 
-test_start = split + seq_length
-signal_idx = 0
+    def run(self):
+        print("\nNekros AUTO başladı. Karanlık devrede...")
+        self.durum_raporu()
 
-for i in range(test_start, len(merged_df)):
-    if capital < initial_capital * (1 - max_drawdown):
-        print("Max drawdown aşıldı → trading durduruldu")
-        break
-
-    current_price = merged_df.iloc[i]['Close']
-    current_high = merged_df.iloc[i]['High']   # trailing için high/low takip
-    current_low  = merged_df.iloc[i]['Low']
-    signal = signals[signal_idx] if signal_idx < len(signals) else 0
-    signal_idx += 1
-
-    position_size = min(100.0, capital * 0.1)
-
-    if positions:
-        pos = positions[0]
-        close_pos = False
-        pnl_ratio = 0.0
-
-        if pos['type'] == 'long':
-            pnl_ratio = (current_price - pos['entry']) / pos['entry']
-
-            # Likidasyon kontrolü
-            if pnl_ratio <= -liq_margin:
-                capital -= pos['margin']
-                close_pos = True
-                print(f"Liquidation LONG @ {current_price:.2f}")
-
-            # Normal SL
-            elif pnl_ratio <= -sl_percent:
-                close_pos = True
-
-            # Take-profit
-            elif pnl_ratio >= tp_percent:
-                close_pos = True
-
-            # Trailing stop
+        while not self.is_dead:
+            yon, token_id, side = self.karar_ver()
+            if yon:
+                self.pozisyon_ac(yon, token_id, side)
             else:
-                # En yüksek seviyeyi güncelle
-                if current_high > pos['max_price']:
-                    pos['max_price'] = current_high
+                self.fisilt("Edge yetersiz... izliyorum (bir sonraki döngüde tekrar bakılacak).")
+            self.durum_raporu()
+            time.sleep(60)  # her 60 sn kontrol et
 
-                # Trailing aktif mi?
-                if pnl_ratio >= trailing_activation:
-                    trailing_stop = pos['max_price'] * (1 - trailing_distance)
-                    if current_price <= trailing_stop:
-                        close_pos = True
-                        print(f"Trailing stop tetiklendi LONG @ {current_price:.2f} (max: {pos['max_price']:.2f})")
-
-            # Model sinyali ters ise kapat
-            if signal == -1:
-                close_pos = True
-
-        else:  # SHORT
-            pnl_ratio = (pos['entry'] - current_price) / pos['entry']
-
-            if pnl_ratio <= -liq_margin:
-                capital -= pos['margin']
-                close_pos = True
-                print(f"Liquidation SHORT @ {current_price:.2f}")
-
-            elif pnl_ratio <= -sl_percent:
-                close_pos = True
-
-            elif pnl_ratio >= tp_percent:
-                close_pos = True
-
-            else:
-                if current_low < pos['min_price']:
-                    pos['min_price'] = current_low
-
-                if pnl_ratio >= trailing_activation:
-                    trailing_stop = pos['min_price'] * (1 + trailing_distance)
-                    if current_price >= trailing_stop:
-                        close_pos = True
-                        print(f"Trailing stop tetiklendi SHORT @ {current_price:.2f} (min: {pos['min_price']:.2f})")
-
-            if signal == 1:
-                close_pos = True
-
-        if close_pos:
-            pnl = pnl_ratio * pos['size']
-            pnl -= pos['margin'] * fees
-            capital += pos['margin'] + pnl
-            positions = []
-
-    # Yeni pozisyon açma
-    if not positions and capital >= position_size:
-        if signal == 1:  # LONG
-            effective_size = position_size * leverage
-            positions.append({
-                'type': 'long',
-                'entry': current_price,
-                'size': effective_size,
-                'margin': position_size,
-                'max_price': current_price   # trailing için başlangıç
-            })
-            capital -= position_size + (position_size * fees)
-        elif signal == -1:  # SHORT
-            effective_size = position_size * leverage
-            positions.append({
-                'type': 'short',
-                'entry': current_price,
-                'size': effective_size,
-                'margin': position_size,
-                'min_price': current_price   # trailing için başlangıç
-            })
-            capital -= position_size + (position_size * fees)
-
-# Son pozisyonu kapat
-if positions:
-    pos = positions[0]
-    exit_price = merged_df.iloc[-1]['Close']
-    if pos['type'] == 'long':
-        pnl_ratio = (exit_price - pos['entry']) / pos['entry']
-    else:
-        pnl_ratio = (pos['entry'] - exit_price) / pos['entry']
-    pnl = pnl_ratio * pos['size']
-    pnl -= pos['margin'] * fees
-    capital += pos['margin'] + pnl
-
-print(f"\nSon Sermaye   : ${capital:,.2f}")
-print(f"Getiri        : {capital / initial_capital:.1f}x")
-
-print(f"Çalışma süresi: {time.time() - start_time:.1f} saniye")
+if __name__ == "__main__":
+    # İlk başta dry_run=True ile test et! False yaparsan GERÇEK PARA gider.
+    nekros = NekrosAuto(dry_run=True)
+    nekros.run()
