@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from .books import Level, parse_levels
 
@@ -26,6 +27,9 @@ class PublicClient:
         self.max_workers = max_workers
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
+        adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=1)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def _get(self, url: str, params: dict | None = None) -> Any:
         response = self.session.get(url, params=params, timeout=self.timeout)

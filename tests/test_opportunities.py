@@ -91,3 +91,13 @@ def test_spot_certainty_buys_cheap_yes_when_already_through_strike():
     )
     opps = find_spot_certainty([quoted], {"BTC": 77100}, now=datetime(2026, 9, 2, 20, 0, tzinfo=timezone.utc))
     assert any(item.kind == "spot_yes_certainty" for item in opps)
+
+
+def test_spot_certainty_skips_thin_buffer_or_long_dated():
+    quoted = _quoted(
+        yes_asks=[Level(0.77, 25)],
+        strike=76000,
+        end_date="2026-09-04T16:00:00Z",
+    )
+    now = datetime(2026, 9, 2, 22, 0, tzinfo=timezone.utc)
+    assert find_spot_certainty([quoted], {"BTC": 77100}, now=now) == []

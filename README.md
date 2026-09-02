@@ -13,7 +13,7 @@ Kaynaklar (hepsi public, auth yok):
 1. **binary_buy_pair** — YES ask + NO ask + taker fee < $1. Çözümde çift $1 öder.
 2. **binary_sell_pair** — YES bid + NO bid − fee > $1. İkisini de short etmek overround kilitler.
 3. **strike_monotonicity** — Aynı merdivende zor YES, kolay YES’ten pahalı bid ediliyorsa buy-easy / sell-hard.
-4. **spot_yes/no_certainty** — Vade yakınken spot strike’ı net geçmişse (kilitli değil, yüksek güven).
+4. **spot_yes/no_certainty** — Vade ≤12s, spot strike’ın ≥%5 ötesinde ve YES/NO ask hâlâ ≤0.94 ise (kilitli değil).
 
 Taker fee resmi formül: `fee = C × feeRate × p × (1 − p)` (crypto `feeRate = 0.07`).  
 [Polymarket fees](https://docs.polymarket.com/trading/fees)

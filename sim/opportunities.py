@@ -26,8 +26,9 @@ ASSET_ALIASES = {
 MIN_SHARES = 5.0
 MIN_EDGE = 0.004
 MAX_SHARE_CAP = 250.0
-SPOT_BUFFER = 0.012
-NEAR_CERTAIN_ASK = 0.985
+SPOT_BUFFER = 0.05
+NEAR_CERTAIN_ASK = 0.94
+SPOT_MAX_HOURS = 12.0
 
 
 @dataclass(frozen=True)
@@ -307,7 +308,7 @@ def find_spot_certainty(
         if end is None:
             continue
         hours_left = (end - now).total_seconds() / 3600.0
-        if hours_left > 48 or hours_left < -6:
+        if hours_left > SPOT_MAX_HOURS or hours_left < -2:
             continue
         min_size = max(quoted.min_size, MIN_SHARES)
 

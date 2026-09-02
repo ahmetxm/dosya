@@ -152,8 +152,11 @@ class LiveEngine:
                 tokens = {leg.token_id for leg in opportunity.legs}
                 if tokens & seen_tokens:
                     continue
-                if not opportunity.locked and not self.config.allow_unlocked:
-                    continue
+                if not opportunity.locked:
+                    extra = opportunity.extra or {}
+                    hours = float(extra.get("hours_left") or 99)
+                    if not self.config.allow_unlocked or hours > 12 or opportunity.edge_per_share < 0.03:
+                        continue
                 trade = self.broker.execute(opportunity, self.config.max_notional_frac)
                 if trade:
                     executed.append(trade)
