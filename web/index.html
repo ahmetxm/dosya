@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Polymarket kâğıt arbitraj</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="kicker">LIVE PAPER · POLYMARKET CRYPTO</p>
+      <h1>Fiyat farkı tarayıcı</h1>
+      <p class="sub">Gerçek emir yok. Gamma + CLOB + Coinbase spot ile kâğıt defter.</p>
+    </div>
+    <div class="controls">
+      <button id="startBtn" type="button">Başlat</button>
+      <button id="cycleBtn" type="button">Tek tur</button>
+      <button id="stopBtn" type="button" class="ghost">Durdur</button>
+      <button id="resetBtn" type="button" class="ghost">Sıfırla</button>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <section class="grid">
+    <article>
+      <h2>Açık fırsatlar</h2>
+      <div id="opps" class="table-wrap">Tarama bekleniyor…</div>
+    </article>
+    <article>
+      <h2>YES+NO en dar spreadler</h2>
+      <div id="misses" class="table-wrap">Tarama bekleniyor…</div>
+    </article>
+  </section>
+
+  <section class="grid">
+    <article>
+      <h2>Kâğıt işlemler</h2>
+      <div id="trades" class="table-wrap">Henüz işlem yok.</div>
+    </article>
+    <article>
+      <h2>Pozisyonlar</h2>
+      <div id="positions" class="table-wrap">Boş.</div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

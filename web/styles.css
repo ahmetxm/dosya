@@ -1,0 +1,38 @@
+:root {
+  --bg: #08110d;
+  --panel: #0f1c16;
+  --line: #1f3d2e;
+  --text: #e8f6ee;
+  --muted: #8eaa99;
+  --good: #3dd68c;
+  --bad: #ff6b6b;
+  --warn: #f4c15d;
+  --accent: #7ee0b1;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; }
+body { padding: 24px; max-width: 1280px; margin: 0 auto; }
+.top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+.kicker { letter-spacing: 0.14em; font-size: 12px; color: var(--accent); margin: 0 0 6px; }
+h1 { margin: 0; font-size: 32px; }
+.sub, h2 { color: var(--muted); }
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+button { background: var(--good); color: #062113; border: 0; padding: 10px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+button:disabled { opacity: 0.45; cursor: wait; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 22px 0; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.stat b { display: block; font-size: 22px; margin-top: 4px; }
+.up { color: var(--good); }
+.down { color: var(--bad); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+article { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+.table-wrap { overflow: auto; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid #163225; vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+.tag { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 11px; background: #163225; color: var(--accent); }
+.tag.warn { background: #3a2d0d; color: var(--warn); }
+.log { background: #07140e; border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-height: 120px; white-space: pre-wrap; color: #b8d7c6; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } body { padding: 14px; } }
